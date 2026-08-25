@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visual PDF Form Filler</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1e1e2e;
+            color: #cdd6f4;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+        header {
+            background: #11111b;
+            padding: 10px 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            border-bottom: 1px solid #313244;
+            flex-wrap: wrap;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        /* Mobile Menu Toggle Button Trigger */
+        #menu-toggle {
+            display: none;
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            z-index: 110;
+            background: #89b4fa;
+            color: #11111b;
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 14px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+        }
+        
+        .btn {
+            background: #89b4fa;
+            color: #11111b;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 13px;
+            transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.9; }
+        .btn:disabled { background: #585b70; color: #a6adc8; cursor: not-allowed; }
+        .btn-export { background: #a6e3a1; }
+        label { font-size: 12px; display: flex; flex-direction: column; gap: 4px; color: #a6adc8; }
+        input[type="file"] { font-size: 12px; }
+        
+        #workspace {
+            flex: 1;
+            overflow: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 25px;
+            position: relative;
+            -webkit-overflow-scrolling: touch;
+        }
+        
+        .page-wrapper {
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            background: white;
+            transform-origin: top left;
+        }
+        .page-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        /* Outline-based rendering prevents bounding box sizing calculations from drifting */
+        .editor-el {
+            position: absolute;
+            outline: 2px dashed #89b4fa;
+            outline-offset: -2px;
+            background: rgba(137, 180, 250, 0.15);
+            cursor: move;
+            pointer-events: auto;
+            box-sizing: border-box;
+            min-width: 50px;
+            min-height: 24px;
+            display: flex;
+            align-items: center;
+            touch-action: none;
+            padding: 0;
+        }
+        .editor-el input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: transparent;
+            font-family: Helvetica, Arial, sans-serif;
+            color: black;
+            outline: none;
+            padding: 0 4px; /* Controlled horizontal layout offset */
+            margin: 0;
+            box-sizing: border-box;
+            display: block;
+        }
+        .editor-el img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            pointer-events: none;
+        }
+        
+        /* Unified, Center-Anchored Corner Buttons (22px diameter, -11px offset) */
+        .move-handle-icon {
+            position: absolute;
+            top: -11px; left: -11px;
+            background: #89b4fa;
+            color: #11111b;
+            border: none;
+            border-radius: 50%;
+            width: 22px; height: 22px;
+            cursor: move;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            z-index: 20;
+            touch-action: none;
+        }
+
+        .delete-btn {
+            position: absolute;
+            top: -11px; right: -11px;
+            background: #f38ba8;
+            color: #11111b;
+            border: none;
+            border-radius: 50%;
+            width: 22px; height: 22px;
+            font-size: 13px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            z-index: 20;
+        }
+
+        .resize-handle {
+            position: absolute;
+            bottom: -11px; right: -11px;
+            background: #89b4fa;
+            color: #11111b;
+            border: none;
+            border-radius: 50%;
+            width: 22px; height: 22px;
+            font-size: 11px;
+            cursor: nwse-resize;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            z-index: 20;
+            touch-action: none;
+        }
+
+        /* Responsive Mobile Layout Adaptations */
+        @media (max-width: 768px) {
+            #menu-toggle {
+                display: block;
+            }
+            #workspace {
+                align-items: flex-start;
+                padding: 10px;
+            }
+            header {
+                position: fixed;
+                top: 70px;
+                right: 15px;
+                width: 240px;
+                background: rgba(17, 17, 27, 0.88);
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+                border: 1px solid #313244;
+                border-radius: 12px;
+                padding: 15px;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+                z-index: 100;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+                transform: translateX(calc(100% + 30px));
+            }
+            header.active {
+                transform: translateX(0);
+            }
+            header div {
+                display: none;
+            }
+            .btn {
+                width: 100%;
+                padding: 12px;
+                font-size: 14px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <button id="menu-toggle">Menu ☰</button>
+
+    <header id="app-header">
+        <label>1. Original PDF:
+            <input type="file" id="pdf-input" accept="application/pdf">
+        </label>
+        <label>2. Stamp Image (Signature/ID):
+            <input type="file" id="image-input" accept="image/*">
+        </label>
+        <div style="flex-grow: 1;"></div>
+        <button class="btn" id="add-text-btn" disabled>+ Add Text</button>
+        <button class="btn" id="add-image-btn" disabled>+ Add Image</button>
+        <button class="btn btn-export" id="export-btn" disabled>Export PDF</button>
+    </header>
+
+    <div id="workspace">
+        <p id="placeholder-msg" style="color: #6c7086; text-align: center; margin-top: 40px;">Upload a PDF template above to start customizing elements visually.</p>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        let pdfRawBytes = null;
+        let imageRawBytes = null;
+        let imageMimeType = '';
+        const RENDER_SCALE = 1.3;
+        const UI_TEXT_PADDING_X = 4; // Matches the CSS horizontal text padding
+
+        const pdfInput = document.getElementById('pdf-input');
+        const imageInput = document.getElementById('image-input');
+        const addTextBtn = document.getElementById('add-text-btn');
+        const addImageBtn = document.getElementById('add-image-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const workspace = document.getElementById('workspace');
+        const menuToggle = document.getElementById('menu-toggle');
+        const appHeader = document.getElementById('app-header');
+
+        // Mobile Floating Menu Logic
+        menuToggle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            appHeader.classList.toggle('active');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (appHeader.classList.contains('active') && !appHeader.contains(e.target) && e.target !== menuToggle) {
+                appHeader.classList.remove('active');
+            }
+        });
+
+        // Handle PDF Loading
+        pdfInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            workspace.innerHTML = '<p style="color: #a6adc8;">Rendering PDF pages...</p>';
+            const reader = new FileReader();
+            reader.onload = async function(ev) {
+                pdfRawBytes = new Uint8Array(ev.target.result);
+                try {
+                    const pdf = await pdfjsLib.getDocument({data: pdfRawBytes.slice()}).promise;
+                    renderEditorPages(pdf);
+                    addTextBtn.disabled = false;
+                    exportBtn.disabled = false;
+                    if (window.innerWidth <= 768) appHeader.classList.remove('active');
+                } catch (renderError) {
+                    console.error("Initial render failed:", renderError);
+                    workspace.innerHTML = '<p style="color: #f38ba8;">Failed to read PDF structure template.</p>';
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // Handle Stamped Image Loading
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            imageMimeType = file.type;
+            
+            const reader = new FileReader();
+            reader.onload = function(ev) {
+                imageRawBytes = new Uint8Array(ev.target.result);
+                addImageBtn.disabled = false;
+                if (window.innerWidth <= 768) appHeader.classList.remove('active');
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        async function renderEditorPages(pdf) {
+            workspace.innerHTML = '';
+            for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                const page = await pdf.getPage(pageNum);
+                const viewport = page.getViewport({ scale: RENDER_SCALE });
+                const baseViewport = page.getViewport({ scale: 1.0 });
+
+                const pageWrapper = document.createElement('div');
+                pageWrapper.className = 'page-wrapper';
+                pageWrapper.style.width = `${viewport.width}px`;
+                pageWrapper.style.height = `${viewport.height}px`;
+                pageWrapper.dataset.pageNum = pageNum;
+                pageWrapper.dataset.pdfWidth = baseViewport.width;
+                pageWrapper.dataset.pdfHeight = baseViewport.height;
+
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+                await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+                const overlay = document.createElement('div');
+                overlay.className = 'page-overlay';
+
+                pageWrapper.appendChild(canvas);
+                pageWrapper.appendChild(overlay);
+                workspace.appendChild(pageWrapper);
+            }
+        }
+
+        function getMostVisiblePage() {
+            const wrappers = document.querySelectorAll('.page-wrapper');
+            if (wrappers.length === 0) return null;
+            
+            const workspaceRect = workspace.getBoundingClientRect();
+            const workspaceCenterY = workspaceRect.top + workspaceRect.height / 2;
+            
+            let closestPage = wrappers[0];
+            let minDistance = Infinity;
+            
+            wrappers.forEach(wrapper => {
+                const rect = wrapper.getBoundingClientRect();
+                const pageCenterY = rect.top + rect.height / 2;
+                const distance = Math.abs(workspaceCenterY - pageCenterY);
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closestPage = wrapper;
+                }
+            });
+            return closestPage;
+        }
+
+        addTextBtn.addEventListener('click', () => { createElement('text'); if (window.innerWidth <= 768) appHeader.classList.remove('active'); });
+        addImageBtn.addEventListener('click', () => { createElement('image'); if (window.innerWidth <= 768) appHeader.classList.remove('active'); });
+
+        function createElement(type) {
+            const targetPage = getMostVisiblePage();
+            if (!targetPage) return;
+            const overlay = targetPage.querySelector('.page-overlay');
+
+            const el = document.createElement('div');
+            el.className = 'editor-el';
+            el.dataset.type = type;
+
+            let defaultWidth = 160;
+            let defaultHeight = 32;
+            
+            // Standard 4-Way Directional Arrow Move Cross
+            const moveHandle = document.createElement('div');
+            moveHandle.className = 'move-handle-icon';
+            moveHandle.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 9 2 12 5 15"></polyline><polyline points="9 5 12 2 15 5"></polyline><polyline points="15 19 12 22 9 19"></polyline><polyline points="19 15 22 12 19 9"></polyline><line x1="2" y1="12" x2="22" y2="12"></line><line x1="12" y1="2" x2="12" y2="22"></line></svg>`;
+            el.appendChild(moveHandle);
+            
+            if (type === 'text') {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.placeholder = 'Tap to type...';
+                el.appendChild(input);
+
+                const resizeObserver = new ResizeObserver(() => {
+                    const optimizedFontSize = Math.max(10, Math.floor(el.clientHeight * 0.55));
+                    input.style.fontSize = `${optimizedFontSize}px`;
+                });
+                resizeObserver.observe(el);
+                
+            } else if (type === 'image') {
+                defaultWidth = 120;
+                defaultHeight = 60;
+                const img = document.createElement('img');
+                const blob = new Blob([imageRawBytes], { type: imageMimeType });
+                img.src = URL.createObjectURL(blob);
+                el.appendChild(img);
+            }
+
+            // Create circular, corner-aligned resize handle
+            const resizeHandle = document.createElement('div');
+            resizeHandle.className = 'resize-handle';
+            resizeHandle.innerHTML = '⤡';
+            el.appendChild(resizeHandle);
+
+            // Centering layout configuration
+            const targetPageRect = targetPage.getBoundingClientRect();
+            const scrollLeftOffset = workspace.scrollLeft;
+            const scrollTopOffset = workspace.scrollTop;
+            
+            let targetLeft = (workspace.offsetWidth / 2 + scrollLeftOffset) - targetPage.offsetLeft - (defaultWidth / 2);
+            let targetTop = (workspace.offsetHeight / 2 + scrollTopOffset) - targetPage.offsetTop - (defaultHeight / 2);
+            
+            targetLeft = Math.max(10, Math.min(targetLeft, targetPage.offsetWidth - defaultWidth - 10));
+            targetTop = Math.max(10, Math.min(targetTop, targetPage.offsetHeight - defaultHeight - 10));
+
+            el.style.width = `${defaultWidth}px`;
+            el.style.height = `${defaultHeight}px`;
+            el.style.left = `${targetLeft}px`;
+            el.style.top = `${targetTop}px`;
+
+            const del = document.createElement('button');
+            del.className = 'delete-btn';
+            del.innerText = '×';
+            del.onclick = (e) => { e.stopPropagation(); el.remove(); };
+            el.appendChild(del);
+
+            setupInteractions(el, resizeHandle, moveHandle);
+            overlay.appendChild(el);
+        }
+
+        // Touch Interaction Engine: Routes explicitly via matching target handles
+        function setupInteractions(el, resizeHandle, moveHandle) {
+            
+            function initiateAction(e, isResizing) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                el.setPointerCapture(e.pointerId);
+                
+                const startX = e.clientX;
+                const startY = e.clientY;
+                const startLeft = el.offsetLeft;
+                const startTop = el.offsetTop;
+                const startWidth = el.offsetWidth;
+                const startHeight = el.offsetHeight;
+
+                function onPointerMove(ev) {
+                    const deltaX = ev.clientX - startX;
+                    const deltaY = ev.clientY - startY;
+
+                    if (isResizing) {
+                        const newW = Math.max(50, startWidth + deltaX);
+                        const newH = Math.max(24, startHeight + deltaY);
+                        el.style.width = `${newW}px`;
+                        el.style.height = `${newH}px`;
+                    } else {
+                        let x = startLeft + deltaX;
+                        let y = startTop + deltaY;
+                        
+                        const maxW = el.parentElement.clientWidth - el.offsetWidth;
+                        const maxH = el.parentElement.clientHeight - el.offsetHeight;
+                        
+                        el.style.left = `${Math.max(0, Math.min(x, maxW))}px`;
+                        el.style.top = `${Math.max(0, Math.min(y, maxH))}px`;
+                    }
+                }
+
+                function onPointerUp(ev) {
+                    try { el.releasePointerCapture(ev.pointerId); } catch(err) {}
+                    window.removeEventListener('pointermove', onPointerMove);
+                    window.removeEventListener('pointerup', onPointerUp);
+                }
+
+                window.addEventListener('pointermove', onPointerMove);
+                window.addEventListener('pointerup', onPointerUp);
+            }
+
+            // 1. Resize corner trigger
+            resizeHandle.addEventListener('pointerdown', (e) => initiateAction(e, true));
+
+            // 2. Dedicated Touch Move button trigger
+            moveHandle.addEventListener('pointerdown', (e) => initiateAction(e, false));
+            
+            // 3. Fallback tracking (Allows images to be easily dragged globally on desktop)
+            el.addEventListener('pointerdown', (e) => {
+                if (e.target.classList.contains('delete-btn') || e.target.tagName === 'INPUT' || e.target === resizeHandle || e.target === moveHandle) return;
+                initiateAction(e, false);
+            });
+        }
+
+        // Compilation Engine Pipeline
+        exportBtn.addEventListener('click', async () => {
+            if (!pdfRawBytes || pdfRawBytes.length === 0) {
+                alert("Core error: PDF data buffer missing.");
+                return;
+            }
+            
+            exportBtn.innerText = 'Compiling...';
+            exportBtn.disabled = true;
+            
+            try {
+                const { PDFDocument, rgb } = PDFLib;
+                const doc = await PDFDocument.load(pdfRawBytes);
+                const pages = doc.getPages();
+
+                let embeddedImage = null;
+                if (imageRawBytes) {
+                    if (imageMimeType.includes('png')) {
+                        embeddedImage = await doc.embedPng(imageRawBytes);
+                    } else {
+                        embeddedImage = await doc.embedJpeg(imageRawBytes);
+                    }
+                }
+
+                const pageWrappers = document.querySelectorAll('.page-wrapper');
+                for (const wrapper of pageWrappers) {
+                    const pageNum = parseInt(wrapper.dataset.pageNum);
+                    const pdfPage = pages[pageNum - 1];
+                    const pdfHeight = parseFloat(wrapper.dataset.pdfHeight);
+                    
+                    const wrapperRect = wrapper.getBoundingClientRect();
+                    const elements = wrapper.querySelectorAll('.editor-el');
+
+                    for (const el of elements) {
+                        const elRect = el.getBoundingClientRect();
+                        
+                        // Clean coordinates relative to wrapper, mapping 1:1 to points
+                        const pdfX = (elRect.left - wrapperRect.left) / RENDER_SCALE;
+                        const pdfW = elRect.width / RENDER_SCALE;
+                        const pdfH = elRect.height / RENDER_SCALE;
+                        const pdfY_bottom = pdfHeight - ((elRect.bottom - wrapperRect.top) / RENDER_SCALE);
+
+                        if (el.dataset.type === 'text') {
+                            const inputEl = el.querySelector('input');
+                            const val = inputEl.value;
+                            if (!val.trim()) continue;
+                            
+                            const computedFontSize = window.getComputedStyle(inputEl).fontSize;
+                            const parsedUiPx = parseFloat(computedFontSize) || 14;
+                            const dynamicPdfFontSize = parsedUiPx / RENDER_SCALE;
+                            
+                            // Perfect baseline coordinate calculation based on browser internal vertical text alignment metrics
+                            const pdfBaselineFromBoxBottom = (pdfH / 2) - (0.28 * dynamicPdfFontSize);
+                            const finalPdfY = pdfY_bottom + pdfBaselineFromBoxBottom;
+                            
+                            pdfPage.drawText(val, {
+                                x: pdfX + (UI_TEXT_PADDING_X / RENDER_SCALE), 
+                                y: finalPdfY,
+                                size: dynamicPdfFontSize,
+                                color: rgb(0, 0, 0)
+                            });
+                            
+                        } else if (el.dataset.type === 'image' && embeddedImage) {
+                            const imgW = embeddedImage.width;
+                            const imgH = embeddedImage.height;
+                            const imgRatio = imgW / imgH;
+                            const containerRatio = pdfW / pdfH;
+
+                            let finalW = pdfW;
+                            let finalH = pdfH;
+                            let finalX = pdfX;
+                            let finalY = pdfY_bottom;
+
+                            if (imgRatio > containerRatio) {
+                                finalH = pdfW / imgRatio;
+                                finalY += (pdfH - finalH) / 2;
+                            } else {
+                                finalW = pdfH * imgRatio;
+                                finalX += (pdfW - finalW) / 2;
+                            }
+
+                            pdfPage.drawImage(embeddedImage, {
+                                x: finalX,
+                                y: finalY,
+                                width: finalW,
+                                height: finalH
+                            });
+                        }
+                    }
+                }
+
+                const modifiedPdfBytes = await doc.save();
+                const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = 'Populated_Form.pdf';
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                
+            } catch (error) {
+                console.error("PDF Geometry calculation trace error:", error);
+                alert("Compilation failed!\n\nDetails: " + error.message);
+            } finally {
+                exportBtn.innerText = 'Export PDF';
+                exportBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
